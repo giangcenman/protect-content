@@ -298,25 +298,66 @@
         if (o) o.remove();
     }
 
-    // ==================== DEVTOOLS BLACKOUT (màn hình đen khi mở DevTools) ====================
+    // ==================== DEVTOOLS BLACKOUT + DOM FLOODING ====================
     let _blackoutActive = false;
     let _blackoutRecoveryInterval = null;
+    let _savedBodyContent = null;
+    let _savedBodyAttrs = null;
+
+    // Tạo chuỗi ngẫu nhiên cho tên class/attribute rác
+    function _rndStr(len) {
+        const c = 'abcdefghijklmnopqrstuvwxyz';
+        let s = '';
+        for (let i = 0; i < len; i++) s += c[(Math.random() * 26) | 0];
+        return s;
+    }
+
+    // Tạo hàng nghìn thẻ rác lồng nhau để làm tràn Elements panel
+    function _generateGarbageDOM(container, count) {
+        const tags = ['div', 'span', 'section', 'article', 'aside', 'nav', 'main', 'header', 'footer', 'p'];
+        let parent = container;
+        for (let i = 0; i < count; i++) {
+            const tag = tags[(Math.random() * tags.length) | 0];
+            const el = document.createElement(tag);
+            // Thêm attribute rác để Elements panel hiển thị dài dòng
+            el.className = _rndStr(8) + ' ' + _rndStr(6) + ' ' + _rndStr(10);
+            el.setAttribute('data-' + _rndStr(5), _rndStr(12));
+            el.setAttribute('data-' + _rndStr(4), _rndStr(15));
+            el.setAttribute('aria-' + _rndStr(5), _rndStr(8));
+            // Lồng sâu mỗi 5 phần tử (tạo cây DOM rất sâu → lag khi mở rộng)
+            if (i % 5 === 0 && i > 0) {
+                parent.appendChild(el);
+                parent = el;
+            } else {
+                container.appendChild(el);
+            }
+        }
+    }
 
     function activateDevToolsBlackout() {
         if (_blackoutActive) return;
         _blackoutActive = true;
 
-        // Ẩn toàn bộ nội dung trang
+        // 1. Lưu toàn bộ nội dung thật vào DocumentFragment
+        _savedBodyContent = document.createDocumentFragment();
+        while (document.body.firstChild) {
+            _savedBodyContent.appendChild(document.body.firstChild);
+        }
+
+        // 2. Tạo overlay trắng che toàn bộ viewport
         const blackout = document.createElement('div');
         blackout.id = 'devtools-blackout-overlay';
         blackout.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#fff;';
-
-        // Ẩn body content + hiện blackout
-        document.body.style.setProperty('visibility', 'hidden', 'important');
         document.body.appendChild(blackout);
-        blackout.style.visibility = 'visible';
 
-        // Tự phục hồi khi DevTools đóng (check mỗi 500ms)
+        // 3. Inject hàng nghìn thẻ rác vào body → Elements panel tràn ngập
+        const garbageContainer = document.createElement('div');
+        garbageContainer.id = 'security-dom-shield';
+        garbageContainer.style.cssText = 'position:absolute;top:-9999px;left:-9999px;width:0;height:0;overflow:hidden;';
+        _generateGarbageDOM(garbageContainer, 2000);
+        document.body.appendChild(garbageContainer);
+
+        // 4. Tự phục hồi khi DevTools đóng
         if (_blackoutRecoveryInterval) clearInterval(_blackoutRecoveryInterval);
         _blackoutRecoveryInterval = setInterval(() => {
             if (!isDevToolsWindowOpen()) {
@@ -332,9 +373,20 @@
             clearInterval(_blackoutRecoveryInterval);
             _blackoutRecoveryInterval = null;
         }
+
+        // Xóa overlay + rác
         const overlay = document.getElementById('devtools-blackout-overlay');
         if (overlay) overlay.remove();
-        document.body.style.removeProperty('visibility');
+        const garbage = document.getElementById('security-dom-shield');
+        if (garbage) garbage.remove();
+
+        // Phục hồi nội dung thật
+        if (_savedBodyContent) {
+            // Xóa hết những gì còn lại trong body
+            while (document.body.firstChild) document.body.removeChild(document.body.firstChild);
+            document.body.appendChild(_savedBodyContent);
+            _savedBodyContent = null;
+        }
     }
 
     // ==================== TELEMETRY ====================
