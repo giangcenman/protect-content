@@ -12,6 +12,7 @@
         enableKeyboardProtection: true,
         enableConsoleProtection: true,
         enableNetworkMonitoring: true,
+        enableLockdown: false,
         maxViolations: 3,
         lockoutTime: 300000, // 5 phút
         debugMode: false,
@@ -385,6 +386,11 @@
     // Khởi tạo bảo mật ban đầu
     function initSecurity() {
         securityState.deviceFingerprint = generateFingerprint();
+
+        if (!CONFIG.enableLockdown) {
+            logSecurityEvent(LOG_TEXT.securityInitialized, 'info');
+            return;
+        }
         
         // Kiểm tra thiết bị đã nằm trong danh sách bị đánh dấu hay chưa
         const flaggedDevices = getStoredData(STORAGE_KEYS.flaggedDevices) || [];
@@ -418,12 +424,16 @@
 
         logSecurityEvent(LOG_TEXT.violationDetected(type), 'warning', activityRecord.details);
 
-        if (securityState.violations >= CONFIG.maxViolations) {
+        if (CONFIG.enableLockdown && securityState.violations >= CONFIG.maxViolations) {
             triggerLockdown(`Multiple violations (${securityState.violations})`);
         }
     }
 
     function triggerLockdown(reason) {
+        if (!CONFIG.enableLockdown) {
+            return;
+        }
+
         if (securityState.isLocked) {
             return;
         }
