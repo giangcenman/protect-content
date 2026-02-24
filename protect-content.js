@@ -301,6 +301,7 @@
     // ==================== DEVTOOLS BLACKOUT + DOM FLOODING (aggressive) ====================
     let _blackoutActive = false;
     let _blackoutRecoveryInterval = null;
+    let _lastDevToolsViolationTime = 0;
     let _blackoutMutationInterval = null;
     let _savedBodyContent = null;
 
@@ -395,9 +396,11 @@
         _startContinuousMutation();
 
         // 5. Tự phục hồi khi DevTools đóng
+        // Chỉ clear khi KHÔNG CÒN detector nào fire trong 3 giây gần nhất VÀ window size bình thường
         if (_blackoutRecoveryInterval) clearInterval(_blackoutRecoveryInterval);
         _blackoutRecoveryInterval = setInterval(() => {
-            if (!isDevToolsWindowOpen()) {
+            const timeSinceLastViolation = Date.now() - _lastDevToolsViolationTime;
+            if (timeSinceLastViolation > 3000 && !isDevToolsWindowOpen()) {
                 clearDevToolsBlackout();
             }
         }, 500);
@@ -572,6 +575,7 @@
 
         // Blackout toàn trang khi phát hiện DevTools
         if (DEVTOOLS_VIOLATION_TYPES.includes(type)) {
+            _lastDevToolsViolationTime = Date.now();
             activateDevToolsBlackout();
         }
 
