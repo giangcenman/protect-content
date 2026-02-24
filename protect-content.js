@@ -112,7 +112,10 @@
         lockdownTimer: null,
         isInternalSecurityAction: false,
         lastLogTimestamps: {},
+        lastLogCleanup: Date.now(),
         maxPerformanceLogTime: 0,
+        performanceWarmupCycles: 0,
+        scriptIdentifier: null, // Lưu src của script hiện tại để integrity check
         originalBindings: { fetch: null, xhrOpen: null, webSocket: null, console: null },
         runtimeIntervals: []
     };
@@ -316,6 +319,8 @@
         ctx.textBaseline = 'top';
         ctx.font = '14px Arial';
         ctx.fillText('Device fingerprint', 2, 2);
+        let pluginNames = '';
+        try { pluginNames = Array.from(navigator.plugins || []).map(p => p.name).join(','); } catch (e) { }
         return btoa(JSON.stringify({
             screen: `${screen.width}x${screen.height}`,
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -323,7 +328,7 @@
             platform: navigator.platform,
             canvas: canvas.toDataURL(),
             webgl: getWebGLFingerprint(),
-            plugins: Array.from(navigator.plugins).map(p => p.name).join(','),
+            plugins: pluginNames,
             userAgent: navigator.userAgent.slice(0, 100)
         }));
     }
@@ -371,13 +376,23 @@
 
     // ==================== LOG BẢO MẬT (có throttle) ====================
     function logSecurityEvent(message, level = 'info', details = null) {
-        // Throttle: không ghi cùng một message quá nhanh
         const now = Date.now();
         const throttleKey = message + '|' + level;
+
+        // Throttle: không ghi cùng một message quá nhanh
         if (securityState.lastLogTimestamps[throttleKey] && now - securityState.lastLogTimestamps[throttleKey] < LIMITS.logThrottleMs) {
             return;
         }
         securityState.lastLogTimestamps[throttleKey] = now;
+
+        // Cleanup throttle map mỗi 60 giây để tránh memory leak
+        if (now - securityState.lastLogCleanup > 60000) {
+            const keys = Object.keys(securityState.lastLogTimestamps);
+            keys.forEach(k => {
+                if (now - securityState.lastLogTimestamps[k] > 60000) delete securityState.lastLogTimestamps[k];
+            });
+            securityState.lastLogCleanup = now;
+        }
 
         const event = {
             timestamp: new Date().toISOString(),
@@ -401,6 +416,7 @@
     // ==================== INIT SECURITY ====================
     function initSecurity() {
         securityState.deviceFingerprint = generateFingerprint();
+        securityState.scriptIdentifier = detectScriptIdentifier();
         if (!CONFIG.enableLockdown) {
             logSecurityEvent(LOG_TEXT.securityInitialized, 'info');
             return;
@@ -508,7 +524,9 @@
 
         // 2. Performance Checker — phương pháp mạnh nhất (từ devtools-detector)
         // Nguyên lý: console.table tạo DOM nodes khi DevTools mở → chậm gấp 10x+
+        // Cần warm-up 3 cycles đầu để thu thập baseline ổn định trước khi so sánh
         if (_console.table) {
+            const WARMUP_CYCLES = 3;
             managedSetInterval(() => {
                 if (!isSdkActive()) return;
                 try {
@@ -521,6 +539,11 @@
                     // Test: console.table time
                     s = performance.now(); _console.table(arr); const tableTime = performance.now() - s;
                     _console.clear();
+
+                    // Warm-up: thu thập baseline trước khi so sánh
+                    securityState.performanceWarmupCycles++;
+                    if (securityState.performanceWarmupCycles <= WARMUP_CYCLES) return;
+
                     if (tableTime === 0) return;
                     if (securityState.maxPerformanceLogTime === 0) {
                         if (getBrowserInfo().isBrave) handleViolation('devtools_performance', VIOLATION_TEXT.devtoolsPerformance);
@@ -891,15 +914,36 @@
         if (!CONFIG.debugMode) e.preventDefault();
     });
 
-    // ==================== INTEGRITY CHECK (sửa string marker) ====================
+    // ==================== INTEGRITY CHECK (hỗ trợ cả inline và CDN) ====================
+    function detectScriptIdentifier() {
+        // Tìm script hiện tại: kiểm tra cả inline (textContent chứa marker) và external (src)
+        const scripts = Array.from(document.scripts);
+        // Ưu tiên tìm inline script có chứa marker
+        const inlineScript = scripts.find(s => s.textContent && s.textContent.includes(INTEGRITY_MARKER));
+        if (inlineScript) return { type: 'inline', marker: INTEGRITY_MARKER };
+        // Nếu không tìm thấy → script được load từ CDN, tìm script cuối cùng đang executing
+        const currentScript = document.currentScript;
+        if (currentScript && currentScript.src) return { type: 'external', src: currentScript.src };
+        // Fallback: tìm script có src chứa 'protect-content'
+        const cdnScript = scripts.find(s => s.src && s.src.includes('protect-content'));
+        if (cdnScript) return { type: 'external', src: cdnScript.src };
+        return null;
+    }
+
     function performIntegrityCheck() {
         if (!isSdkActive()) return;
         ['addEventListener', 'removeEventListener', 'preventDefault', 'stopPropagation'].forEach(fn => {
             if (typeof document[fn] !== 'function') handleViolation('function_tampering', VIOLATION_FORMAT.functionTampering(fn));
         });
-        // Kiểm tra script bảo vệ còn tồn tại — dùng INTEGRITY_MARKER
+        // Kiểm tra script bảo vệ còn tồn tại trên trang
+        if (!securityState.scriptIdentifier) return;
         const scripts = Array.from(document.scripts);
-        const found = scripts.some(s => s.textContent && s.textContent.includes(INTEGRITY_MARKER));
+        let found = false;
+        if (securityState.scriptIdentifier.type === 'inline') {
+            found = scripts.some(s => s.textContent && s.textContent.includes(securityState.scriptIdentifier.marker));
+        } else if (securityState.scriptIdentifier.type === 'external') {
+            found = scripts.some(s => s.src === securityState.scriptIdentifier.src);
+        }
         if (!found) handleViolation('script_removal', VIOLATION_TEXT.scriptRemoval);
     }
 
