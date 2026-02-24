@@ -2,7 +2,7 @@
 (function() {
     'use strict';
 
-    // Cấu hình hệ thống bảo vệ
+    // Cấu hình hệ thống bảo vệ.
     const CONFIG = {
         autoStart: true,
         mode: 'enforce',
