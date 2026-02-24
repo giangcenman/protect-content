@@ -615,6 +615,7 @@
 
         const blockedKeys = [
             { key: 123 },                          // F12
+            { key: 120 },                          // F9
             { ctrl: true, shift: true, key: 73 },  // Ctrl+Shift+I
             { ctrl: true, shift: true, key: 74 },  // Ctrl+Shift+J
             { ctrl: true, shift: true, key: 67 },  // Ctrl+Shift+C
