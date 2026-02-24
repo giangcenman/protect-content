@@ -2,7 +2,7 @@
 (function() {
     'use strict';
 
-    // Cấu hình hệ thống bảo vệ.
+    // Cấu hình hệ thống bảo vệ
     const CONFIG = {
         autoStart: true,
         mode: 'enforce',
@@ -46,8 +46,7 @@
         consoleClear: 1000,
         consoleCheck: 100,
         integrityCheck: 5000,
-        securityHeartbeat: 30000,
-        alertToast: 3000
+        securityHeartbeat: 30000
     };
 
     // STATE: Quản lý trạng thái bảo mật trong phiên hiện tại
@@ -74,7 +73,6 @@
     let contentInteractionProtectionInitialized = false;
 
     // TEXT + HELPERS: Cấu hình văn bản hiển thị và thông điệp hệ thống
-    const PROTECTION_ALERT_MESSAGE = 'Website is protected';
     const STORAGE_KEYS = {
         flaggedDevices: 'flagged_devices',
         securityEvents: 'security_events'
@@ -448,7 +446,6 @@
         }
 
         logSecurityEvent(LOG_TEXT.lockdownTriggered(safeReason), 'critical');
-        showProtectionAlert('error', PROTECTION_ALERT_MESSAGE);
         renderLockdownOverlay(safeReason);
 
         if (securityState.lockdownTimer) {
@@ -499,13 +496,10 @@
 
                 if (eventType === 'copy') {
                     e.clipboardData?.setData('text/plain', '');
-                    showProtectionAlert('error', PROTECTION_ALERT_MESSAGE);
                     handleViolation('copy_attempt', VIOLATION_TEXT.copyAttempt);
                 } else if (eventType === 'cut') {
-                    showProtectionAlert('error', PROTECTION_ALERT_MESSAGE);
                     handleViolation('cut_attempt', VIOLATION_TEXT.cutAttempt);
                 } else if (eventType === 'paste') {
-                    showProtectionAlert('warning', PROTECTION_ALERT_MESSAGE);
                     handleViolation('paste_attempt', VIOLATION_TEXT.pasteAttempt);
                 }
 
@@ -546,7 +540,6 @@
                 e.stopPropagation();
 
                 if (eventType === 'dragstart') {
-                    showProtectionAlert('warning', PROTECTION_ALERT_MESSAGE);
                     handleViolation('drag_attempt', VIOLATION_TEXT.dragBlocked);
                 }
 
@@ -741,9 +734,6 @@
                     violationType = 'context_menu_blocked';
                 }
                 
-                // Hiển thị cảnh báo cho người dùng
-                showProtectionAlert('warning', PROTECTION_ALERT_MESSAGE);
-                
                 // Ghi nhận vi phạm để phục vụ theo dõi
                 handleViolation(violationType, `Key combination: ${e.keyCode}`);
                 
@@ -810,8 +800,7 @@
                     if (recentKeys.every((key, i) => key === pattern[i])) {
                         const recentTimes = keyTimestamps.slice(-pattern.length);
                         const timeDiff = recentTimes[recentTimes.length - 1] - recentTimes[0];
-                        
-                        showProtectionAlert('warning', PROTECTION_ALERT_MESSAGE);
+
                         handleViolation('suspicious_key_pattern', VIOLATION_FORMAT.suspiciousPattern(pattern, timeDiff));
                     }
                 }
@@ -1163,58 +1152,6 @@
         storeData(STORAGE_KEYS.securityEvents, events);
     }
 
-    // Hệ thống cảnh báo nâng cao
-    function showProtectionAlert(icon, message) {
-        if (typeof Swal !== 'undefined') {
-            Swal.fire({
-                toast: true,
-                position: 'top-end',
-                icon: icon,
-                title: message,
-                showConfirmButton: false,
-                timer: INTERVALS_MS.alertToast,
-                timerProgressBar: true,
-                customClass: {
-                    popup: 'security-alert'
-                }
-            });
-        } else {
-            // Phương án dự phòng: cảnh báo tự tạo
-            const alertDiv = document.createElement('div');
-            alertDiv.innerHTML = `
-                <div style="
-                    position: fixed;
-                    top: 20px;
-                    right: 20px;
-                    background: ${icon === 'error' ? '#ff4444' : icon === 'warning' ? '#ffaa00' : '#4444ff'};
-                    color: white;
-                    padding: 15px 20px;
-                    border-radius: 8px;
-                    z-index: 999999;
-                    font-family: Arial, sans-serif;
-                    font-size: 14px;
-                    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-                    animation: slideIn 0.3s ease-out;
-                ">
-                    🛡️ ${message}
-                </div>
-                <style>
-                    @keyframes slideIn {
-                        from { transform: translateX(100%); opacity: 0; }
-                        to { transform: translateX(0); opacity: 1; }
-                    }
-                </style>
-            `;
-            
-            document.body.appendChild(alertDiv);
-            setTimeout(() => {
-                if (alertDiv.parentNode) {
-                    alertDiv.parentNode.removeChild(alertDiv);
-                }
-            }, INTERVALS_MS.alertToast);
-        }
-    }
-
     // Áp dụng lớp CSS bảo vệ toàn diện
     function applyCSSProtection() {
         const protectionStyles = document.createElement('style');
@@ -1263,12 +1200,6 @@
                 }
             }
             
-            /* Kiểu hiển thị cho cảnh báo bảo mật */
-            .security-alert {
-                font-family: 'Courier New', monospace !important;
-                border: 2px solid #ff0000 !important;
-            }
-
             /* Tắt hiệu ứng highlight của công cụ inspect */
             *:hover {
                 outline: none !important;
