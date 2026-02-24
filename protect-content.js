@@ -298,40 +298,74 @@
         if (o) o.remove();
     }
 
-    // ==================== DEVTOOLS BLACKOUT + DOM FLOODING ====================
+    // ==================== DEVTOOLS BLACKOUT + DOM FLOODING (aggressive) ====================
     let _blackoutActive = false;
     let _blackoutRecoveryInterval = null;
+    let _blackoutMutationInterval = null;
     let _savedBodyContent = null;
-    let _savedBodyAttrs = null;
 
-    // Tạo chuỗi ngẫu nhiên cho tên class/attribute rác
     function _rndStr(len) {
-        const c = 'abcdefghijklmnopqrstuvwxyz';
+        const c = 'abcdefghijklmnopqrstuvwxyz0123456789';
         let s = '';
-        for (let i = 0; i < len; i++) s += c[(Math.random() * 26) | 0];
+        for (let i = 0; i < len; i++) s += c[(Math.random() * 36) | 0];
         return s;
     }
 
-    // Tạo hàng nghìn thẻ rác lồng nhau để làm tràn Elements panel
+    // Tạo hàng nghìn thẻ rác lồng sâu + attribute + style + text
     function _generateGarbageDOM(container, count) {
-        const tags = ['div', 'span', 'section', 'article', 'aside', 'nav', 'main', 'header', 'footer', 'p'];
+        const tags = ['div', 'span', 'section', 'article', 'aside', 'nav', 'main', 'header', 'footer', 'p', 'ul', 'li', 'table', 'tr', 'td', 'form', 'label', 'a', 'b', 'i'];
         let parent = container;
         for (let i = 0; i < count; i++) {
             const tag = tags[(Math.random() * tags.length) | 0];
             const el = document.createElement(tag);
-            // Thêm attribute rác để Elements panel hiển thị dài dòng
-            el.className = _rndStr(8) + ' ' + _rndStr(6) + ' ' + _rndStr(10);
-            el.setAttribute('data-' + _rndStr(5), _rndStr(12));
-            el.setAttribute('data-' + _rndStr(4), _rndStr(15));
-            el.setAttribute('aria-' + _rndStr(5), _rndStr(8));
-            // Lồng sâu mỗi 5 phần tử (tạo cây DOM rất sâu → lag khi mở rộng)
-            if (i % 5 === 0 && i > 0) {
+            // 5 class + 8 data attributes → Elements panel hiện rất dài mỗi dòng
+            el.className = [_rndStr(10), _rndStr(8), _rndStr(12), _rndStr(6), _rndStr(9)].join(' ');
+            for (let a = 0; a < 8; a++) {
+                el.setAttribute('data-' + _rndStr(6 + (Math.random() * 4 | 0)), _rndStr(15 + (Math.random() * 10 | 0)));
+            }
+            // Inline style dài → mỗi element chiếm nhiều không gian hơn trong panel
+            el.style.cssText = 'position:absolute;top:-' + (Math.random() * 9999 | 0) + 'px;left:-' + (Math.random() * 9999 | 0) + 'px;width:' + (Math.random() * 100 | 0) + 'px;height:' + (Math.random() * 100 | 0) + 'px;opacity:0;pointer-events:none;overflow:hidden;z-index:' + (Math.random() * 999 | 0) + ';';
+            // Text node rác bên trong
+            el.textContent = _rndStr(20 + (Math.random() * 30 | 0));
+            // Lồng sâu mỗi 3 phần tử → cây DOM cực sâu, mở rộng cực lag
+            if (i % 3 === 0 && i > 0) {
                 parent.appendChild(el);
                 parent = el;
             } else {
                 container.appendChild(el);
             }
         }
+    }
+
+    // Liên tục biến đổi DOM → Elements panel không bao giờ ổn định, phải re-render liên tục
+    function _startContinuousMutation() {
+        if (_blackoutMutationInterval) return;
+        const garbage = document.getElementById('security-dom-shield');
+        if (!garbage) return;
+        _blackoutMutationInterval = setInterval(() => {
+            if (!_blackoutActive || !garbage.parentNode) {
+                clearInterval(_blackoutMutationInterval);
+                _blackoutMutationInterval = null;
+                return;
+            }
+            // Xóa 20 node đầu rồi thêm 25 node mới → DOM liên tục thay đổi
+            for (let i = 0; i < 20 && garbage.firstChild; i++) garbage.removeChild(garbage.firstChild);
+            for (let i = 0; i < 25; i++) {
+                const el = document.createElement('div');
+                el.className = [_rndStr(12), _rndStr(8), _rndStr(10), _rndStr(7)].join(' ');
+                for (let a = 0; a < 6; a++) el.setAttribute('data-' + _rndStr(5), _rndStr(20));
+                el.style.cssText = 'position:absolute;top:-9999px;opacity:0;pointer-events:none;';
+                el.textContent = _rndStr(30);
+                garbage.appendChild(el);
+            }
+            // Thay đổi attribute của 10 node ngẫu nhiên trong garbage → trigger re-render
+            const children = garbage.children;
+            for (let i = 0; i < 10 && children.length > 0; i++) {
+                const idx = (Math.random() * children.length) | 0;
+                children[idx].setAttribute('data-' + _rndStr(4), _rndStr(25));
+                children[idx].className = [_rndStr(11), _rndStr(9), _rndStr(7)].join(' ');
+            }
+        }, 200);
     }
 
     function activateDevToolsBlackout() {
@@ -344,20 +378,23 @@
             _savedBodyContent.appendChild(document.body.firstChild);
         }
 
-        // 2. Tạo overlay trắng che toàn bộ viewport
+        // 2. Overlay trắng
         const blackout = document.createElement('div');
         blackout.id = 'devtools-blackout-overlay';
         blackout.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#fff;';
         document.body.appendChild(blackout);
 
-        // 3. Inject hàng nghìn thẻ rác vào body → Elements panel tràn ngập
+        // 3. Inject 5000 thẻ rác → Elements panel tràn ngập và lag nặng
         const garbageContainer = document.createElement('div');
         garbageContainer.id = 'security-dom-shield';
         garbageContainer.style.cssText = 'position:absolute;top:-9999px;left:-9999px;width:0;height:0;overflow:hidden;';
-        _generateGarbageDOM(garbageContainer, 2000);
+        _generateGarbageDOM(garbageContainer, 5000);
         document.body.appendChild(garbageContainer);
 
-        // 4. Tự phục hồi khi DevTools đóng
+        // 4. Bắt đầu liên tục biến đổi DOM (lag không ngừng)
+        _startContinuousMutation();
+
+        // 5. Tự phục hồi khi DevTools đóng
         if (_blackoutRecoveryInterval) clearInterval(_blackoutRecoveryInterval);
         _blackoutRecoveryInterval = setInterval(() => {
             if (!isDevToolsWindowOpen()) {
@@ -369,25 +406,21 @@
     function clearDevToolsBlackout() {
         if (!_blackoutActive) return;
         _blackoutActive = false;
-        if (_blackoutRecoveryInterval) {
-            clearInterval(_blackoutRecoveryInterval);
-            _blackoutRecoveryInterval = null;
-        }
+        if (_blackoutRecoveryInterval) { clearInterval(_blackoutRecoveryInterval); _blackoutRecoveryInterval = null; }
+        if (_blackoutMutationInterval) { clearInterval(_blackoutMutationInterval); _blackoutMutationInterval = null; }
 
-        // Xóa overlay + rác
         const overlay = document.getElementById('devtools-blackout-overlay');
         if (overlay) overlay.remove();
         const garbage = document.getElementById('security-dom-shield');
         if (garbage) garbage.remove();
 
-        // Phục hồi nội dung thật
         if (_savedBodyContent) {
-            // Xóa hết những gì còn lại trong body
             while (document.body.firstChild) document.body.removeChild(document.body.firstChild);
             document.body.appendChild(_savedBodyContent);
             _savedBodyContent = null;
         }
     }
+
 
     // ==================== TELEMETRY ====================
     function reportSecurityEventToServer(event) {
