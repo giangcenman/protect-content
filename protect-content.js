@@ -298,6 +298,45 @@
         if (o) o.remove();
     }
 
+    // ==================== DEVTOOLS BLACKOUT (màn hình đen khi mở DevTools) ====================
+    let _blackoutActive = false;
+    let _blackoutRecoveryInterval = null;
+
+    function activateDevToolsBlackout() {
+        if (_blackoutActive) return;
+        _blackoutActive = true;
+
+        // Ẩn toàn bộ nội dung trang
+        const blackout = document.createElement('div');
+        blackout.id = 'devtools-blackout-overlay';
+        blackout.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#fff;';
+
+        // Ẩn body content + hiện blackout
+        document.body.style.setProperty('visibility', 'hidden', 'important');
+        document.body.appendChild(blackout);
+        blackout.style.visibility = 'visible';
+
+        // Tự phục hồi khi DevTools đóng (check mỗi 500ms)
+        if (_blackoutRecoveryInterval) clearInterval(_blackoutRecoveryInterval);
+        _blackoutRecoveryInterval = setInterval(() => {
+            if (!isDevToolsWindowOpen()) {
+                clearDevToolsBlackout();
+            }
+        }, 500);
+    }
+
+    function clearDevToolsBlackout() {
+        if (!_blackoutActive) return;
+        _blackoutActive = false;
+        if (_blackoutRecoveryInterval) {
+            clearInterval(_blackoutRecoveryInterval);
+            _blackoutRecoveryInterval = null;
+        }
+        const overlay = document.getElementById('devtools-blackout-overlay');
+        if (overlay) overlay.remove();
+        document.body.style.removeProperty('visibility');
+    }
+
     // ==================== TELEMETRY ====================
     function reportSecurityEventToServer(event) {
         if (!CONFIG.telemetryEndpoint || securityState.isInternalSecurityAction) return;
@@ -432,6 +471,11 @@
     }
 
     // ==================== VIOLATION HANDLING ====================
+    const DEVTOOLS_VIOLATION_TYPES = [
+        'devtools_size', 'devtools_performance', 'devtools_console',
+        'devtools_debugger', 'devtools_formatter', 'devtools_eruda', 'console_opened'
+    ];
+
     function handleViolation(type, details = null) {
         if (!isSdkActive() || securityState.isLocked) return;
         securityState.violations += 1;
@@ -440,6 +484,12 @@
         securityState.suspiciousActivity.push(record);
         if (securityState.suspiciousActivity.length > LIMITS.maxSuspiciousActivities) securityState.suspiciousActivity.shift();
         logSecurityEvent(LOG_TEXT.violationDetected(type), 'warning', record.details);
+
+        // Blackout toàn trang khi phát hiện DevTools
+        if (DEVTOOLS_VIOLATION_TYPES.includes(type)) {
+            activateDevToolsBlackout();
+        }
+
         if (CONFIG.enableLockdown && securityState.violations >= CONFIG.maxViolations) {
             triggerLockdown(`Multiple violations (${securityState.violations})`);
         }
@@ -616,7 +666,7 @@
         if (!CONFIG.enableKeyboardProtection) return;
 
         const blockedKeys = [
-            // { key: 123 },                          // F12
+            // { key: 123 },                          // F12 (tạm tắt để test)
             { key: 120 },                          // F9
             { ctrl: true, shift: true, key: 73 },  // Ctrl+Shift+I
             { ctrl: true, shift: true, key: 74 },  // Ctrl+Shift+J
