@@ -169,8 +169,10 @@
     };
     const VIOLATION_TEXT = SECURITY_TEXT.violation;
     const LOG_TEXT = SECURITY_TEXT.log;
-    const ERROR_TEXT = SECURITY_TEXT.error;
     const INTEGRITY_MARKER = '__PROTECT_CONTENT_ACTIVE__';
+
+    // Ghi lại script identifier ngay lúc parse (document.currentScript chỉ có giá trị lúc này)
+    const _currentScriptSrc = (document.currentScript && document.currentScript.src) ? document.currentScript.src : null;
 
     // ==================== HELPER FUNCTIONS ====================
     function isEditableTarget(t) {
@@ -614,7 +616,7 @@
         if (!CONFIG.enableKeyboardProtection) return;
 
         const blockedKeys = [
-            { key: 123 },                          // F12
+            // { key: 123 },                          // F12
             { key: 120 },                          // F9
             { ctrl: true, shift: true, key: 73 },  // Ctrl+Shift+I
             { ctrl: true, shift: true, key: 74 },  // Ctrl+Shift+J
@@ -700,6 +702,17 @@
             e.target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: e.clientX, clientY: e.clientY, button: 0, buttons: 1 }));
             return false;
         });
+
+        // Chặn long-press context menu trên thiết bị cảm ứng
+        let touchTimer = null;
+        document.addEventListener('touchstart', function (e) {
+            if (!isSdkActive() || !isEnforceMode()) return;
+            touchTimer = setTimeout(() => {
+                handleViolation('context_menu_blocked', 'Long press detected');
+            }, 500);
+        }, { passive: true });
+        document.addEventListener('touchend', function () { if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; } }, { passive: true });
+        document.addEventListener('touchmove', function () { if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; } }, { passive: true });
 
         let clickCount = 0, clickTimer = null;
         document.addEventListener('click', function () {
@@ -852,7 +865,7 @@
 
         managedSetInterval(() => {
             if (!isSdkActive()) return;
-            try { console.clear(); } catch (e) { }
+            try { _console.clear(); } catch (e) { }
         }, INTERVALS_MS.consoleClear);
 
         let consoleOpened = false;
@@ -865,6 +878,7 @@
     // ==================== CSS PROTECTION (bỏ scrollbar hide, bỏ img pointer-events) ====================
     function applyCSSProtection() {
         const style = document.createElement('style');
+        style.id = 'security-css-protection';
         style.textContent = `
             * {
                 user-select: none !important;
@@ -900,6 +914,22 @@
             }
         `;
         document.head.appendChild(style);
+
+        // MutationObserver: tự phục hồi nếu style bị xóa qua DevTools
+        if (typeof MutationObserver !== 'undefined') {
+            const observer = new MutationObserver((mutations) => {
+                if (!isSdkActive()) return;
+                for (const mutation of mutations) {
+                    for (const removed of mutation.removedNodes) {
+                        if (removed.id === 'security-css-protection') {
+                            handleViolation('css_tampering', 'CSS protection style removed');
+                            document.head.appendChild(style);
+                        }
+                    }
+                }
+            });
+            observer.observe(document.head, { childList: true });
+        }
     }
 
     // ==================== ERROR HANDLERS (conditional preventDefault) ====================
@@ -922,9 +952,8 @@
         // Ưu tiên tìm inline script có chứa marker
         const inlineScript = scripts.find(s => s.textContent && s.textContent.includes(INTEGRITY_MARKER));
         if (inlineScript) return { type: 'inline', marker: INTEGRITY_MARKER };
-        // Nếu không tìm thấy → script được load từ CDN, tìm script cuối cùng đang executing
-        const currentScript = document.currentScript;
-        if (currentScript && currentScript.src) return { type: 'external', src: currentScript.src };
+        // Dùng _currentScriptSrc đã ghi lại lúc parse-time (document.currentScript = null sau khi IIFE kết thúc)
+        if (_currentScriptSrc) return { type: 'external', src: _currentScriptSrc };
         // Fallback: tìm script có src chứa 'protect-content'
         const cdnScript = scripts.find(s => s.src && s.src.includes('protect-content'));
         if (cdnScript) return { type: 'external', src: cdnScript.src };
@@ -957,6 +986,19 @@
         while (true) { arr.push(0); location.reload(); }
     }
 
+    // ==================== PHÁT HIỆN IFRAME ====================
+    function initIframeDetection() {
+        // Phát hiện nếu website bị nhúng trong iframe (clickjacking / content theft)
+        try {
+            if (window.self !== window.top) {
+                handleViolation('iframe_detected', 'Page loaded inside iframe: ' + (document.referrer || 'unknown'));
+            }
+        } catch (e) {
+            // Cross-origin iframe → window.top bị chặn bởi same-origin policy
+            handleViolation('iframe_detected', 'Cross-origin iframe detected');
+        }
+    }
+
     // ==================== KHỞI TẠO TOÀN BỘ ====================
     function initializeAllSecurity() {
         try {
@@ -969,6 +1011,7 @@
             initAutomationDetection();
             initConsoleProtection();
             applyCSSProtection();
+            initIframeDetection();
             managedSetInterval(performIntegrityCheck, INTERVALS_MS.integrityCheck);
             managedSetInterval(() => logSecurityEvent(LOG_TEXT.securityHeartbeat, 'info'), INTERVALS_MS.securityHeartbeat);
             logSecurityEvent(LOG_TEXT.allMeasuresInitialized, 'success');
